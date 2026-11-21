@@ -10,7 +10,8 @@ No-goal restart preserves the original limits; an explicit goal starts a new
 supervision window, not new permission. Limits: 60 automatic continuations or
 two elapsed hours, checked between runs rather than preempting an in-flight tool.
 Bird pins the real directory and jj change; identity failure pauses supervision.
-Escape, stop/pause, reload, and tree navigation cannot automatically resume it.
+Escape pauses active runs; use `/bird stop` during a start waiting for jj.
+Stop/pause, reload, and tree navigation cannot automatically resume supervision.
 Checkpoint completion means evidence reported for review, not certification.
 Bird stores goals, workspace pins, and checkpoints in Pi session history; keep
 sensitive data out of them. Control normalization is not secret redaction.
@@ -24,6 +25,7 @@ just validate
 just compat
 ```
 
+The pinned dev shell supports Linux and Apple Silicon macOS, not Intel macOS.
 These run typing, lint, formatting, per-file coverage, package assembly, and real
 Shaka repository gates. `shaka build` is a stub, so npm performs assembly.
 The Shaka policy and native main ruleset are desired configuration, not proof of

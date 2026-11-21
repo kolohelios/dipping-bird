@@ -17,7 +17,6 @@ test:
 coverage:
     npm run coverage
 build:
-    mkdir -p dist
     npm run build
 repo-checks:
     test -d .jj || jj git init --colocate
@@ -25,6 +24,7 @@ repo-checks:
     shaka preflight --keep-going
     nixfmt --check flake.nix
     nix flake check
+    nix flake check --all-systems --no-build
 validate: typecheck lint format-check coverage build repo-checks
 compat:
     nix develop .#node22 --command just validate
