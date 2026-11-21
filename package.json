@@ -1,0 +1,79 @@
+{
+  "name": "@kolohelios/dipping-bird",
+  "version": "0.1.0",
+  "description": "Opt-in, bounded, evidence-driven continuation for the Pi coding agent (jj workspaces).",
+  "type": "module",
+  "license": "MIT",
+  "author": "Jon Edwards <jkedwards@me.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kolohelios/dipping-bird.git"
+  },
+  "homepage": "https://github.com/kolohelios/dipping-bird#readme",
+  "bugs": "https://github.com/kolohelios/dipping-bird/issues",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "continuation",
+    "jujutsu"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "extensions/*.ts",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.2",
+    "c8": "9.1.0",
+    "eslint": "10.15.0",
+    "globals": "17.4.0",
+    "prettier": "3.10.1",
+    "typebox": "1.4.7",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.73.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint extensions test",
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "test": "node --test test/*.test.mjs",
+    "coverage": "c8 node --test test/*.test.mjs"
+  },
+  "c8": {
+    "all": true,
+    "include": [
+      "extensions/**/*.ts"
+    ],
+    "extension": [
+      ".ts"
+    ],
+    "check-coverage": true,
+    "per-file": true,
+    "statements": 90,
+    "branches": 90,
+    "functions": 90,
+    "lines": 90,
+    "reporter": [
+      "text",
+      "html",
+      "lcov",
+      "json-summary"
+    ]
+  }
+}
