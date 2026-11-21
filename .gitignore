@@ -1,0 +1,8 @@
+node_modules/
+coverage/
+dist/
+.direnv/
+.jj/
+result
+*.tgz
+.DS_Store
