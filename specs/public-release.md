@@ -37,7 +37,10 @@ Declare Pi-provided imports as peers rather than bundling a second Pi runtime.
    loader without model requests or global configuration changes.
 4. Add pinned Shaka/Nix tooling and GitHub Actions with dependency caches and
    reports/artifacts. Local and CI checks use the same recipes. Checks run on
-   every PR and main push; no automatic npm publication.
+   every PR and main push; no automatic npm publication. Before PR delivery,
+   require the actual hosted checks on protected main, block force pushes and
+   deletion, and require PR-based merges. Desired local policy is not evidence
+   that remote rules are enabled.
 
 ## Shaka integration
 

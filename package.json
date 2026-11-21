@@ -26,7 +26,9 @@
     "CHANGELOG.md",
     "LICENSE",
     "LICENSE-MIT",
-    "LICENSE-APACHE"
+    "LICENSE-APACHE",
+    "architecture.md",
+    "architecture-decision-record.md"
   ],
   "pi": {
     "extensions": [
@@ -47,7 +49,8 @@
     "prettier": "3.10.1",
     "typebox": "1.4.7",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.73.0"
+    "typescript-eslint": "8.73.0",
+    "yaml": "2.9.1"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -55,7 +58,7 @@
     "format:check": "prettier --check .",
     "format": "prettier --write .",
     "test": "node --test test/*.test.mjs",
-    "build": "node --input-type=module -e \"import {mkdirSync} from 'node:fs'; mkdirSync('dist', {recursive:true})\" && npm pack --ignore-scripts --pack-destination dist",
+    "build": "node --test test/package.test.mjs",
     "coverage": "c8 node --test test/*.test.mjs"
   },
   "c8": {
