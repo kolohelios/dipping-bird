@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -29,15 +32,27 @@ const run = (command, args, cwd) =>
 test("the release tarball installs offline and loads through Pi's real package loader", async () => {
   const scratch = mkdtempSync(join(tmpdir(), "dipping-bird-package-"));
   try {
-    const dist = join(root, "dist");
-    mkdirSync(dist, { recursive: true });
+    const packedDir = join(scratch, "packed");
+    mkdirSync(packedDir);
+    writeFileSync(join(scratch, "npmrc"), "");
+    writeFileSync(join(scratch, "global-npmrc"), "");
+    const npmConfig = [
+      "--offline",
+      "--cache",
+      join(scratch, "cache"),
+      "--userconfig",
+      join(scratch, "npmrc"),
+      "--globalconfig",
+      join(scratch, "global-npmrc"),
+    ];
+    const runNpm = (args, cwd) => run("npm", [...npmConfig, ...args], cwd);
     const [packed] = JSON.parse(
-      run(
-        "npm",
-        ["pack", "--ignore-scripts", "--json", "--pack-destination", dist],
+      runNpm(
+        ["pack", "--ignore-scripts", "--json", "--pack-destination", packedDir],
         root,
       ),
     );
+    const tarball = join(packedDir, packed.filename);
     assert.deepEqual(packed.files.map(({ path }) => path).sort(), [
       "CHANGELOG.md",
       "LICENSE",
@@ -50,15 +65,14 @@ test("the release tarball installs offline and loads through Pi's real package l
       "extensions/index.ts",
       "package.json",
     ]);
-    run(
-      "npm",
+    runNpm(
       [
         "install",
-        join(dist, packed.filename),
+        tarball,
         "--offline",
         "--ignore-scripts",
         "--omit=dev",
-        "--omit=peer",
+        "--legacy-peer-deps",
         "--package-lock=false",
         "--no-audit",
         "--no-fund",
@@ -147,6 +161,15 @@ test("the release tarball installs offline and loads through Pi's real package l
       "input",
     ]) {
       assert(extension.handlers.has(name), `Missing ${name}`);
+    }
+    const dist = join(root, "dist");
+    mkdirSync(dist, { recursive: true });
+    const staged = join(dist, `.${packed.filename}.${randomUUID()}.tmp`);
+    try {
+      copyFileSync(tarball, staged);
+      renameSync(staged, join(dist, packed.filename));
+    } finally {
+      rmSync(staged, { force: true });
     }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
