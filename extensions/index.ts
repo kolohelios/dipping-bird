@@ -8,6 +8,7 @@ import type {
 import {
   advance,
   checkpoint,
+  hasBudget,
   MAX_CONTINUATIONS,
   MAX_ELAPSED_MS,
   pause,
@@ -18,14 +19,13 @@ import {
   type State,
 } from "./core.ts";
 
-const START_MESSAGE = /^\[BIRD START [0-9a-f-]{36}\]$/m;
-
 const DEFAULT_GOAL =
   "Finish the current conversation's task against its existing acceptance criteria and specs. Require evidence for every applicable criterion, native acceptance where required, and resolution of owner/vendor holds. Do not substitute offline test counts, more planning, or harness scaffolding for delivery.";
 
 export default function dippingBird(pi: ExtensionAPI): void {
   let state: State | undefined;
   let revision = 0;
+  const issuedStarts = new Set<string>();
   let pendingStart:
     { state: State; prompt: string; ready: boolean } | undefined;
 
@@ -148,11 +148,7 @@ export default function dippingBird(pi: ExtensionAPI): void {
           }
           if (pin.cwd !== state.cwd || pin.change !== state.change)
             throw new Error("Pin differs; resuming is refused.");
-          if (
-            Date.now() < state.startedAt ||
-            Date.now() - state.startedAt >= MAX_ELAPSED_MS ||
-            state.continuations >= MAX_CONTINUATIONS
-          ) {
+          if (!hasBudget(state, Date.now())) {
             ctx.ui.notify(
               "Supervision cap reached. /bird start <goal> explicitly begins a new model-work window, never a new live-I/O authorization.",
               "warning",
@@ -176,9 +172,11 @@ export default function dippingBird(pi: ExtensionAPI): void {
           const initialPrompt = `[BIRD START ${randomUUID()}]\n${prompt(next)}`;
           save(ctx, pause(next, "Awaiting initial run; Bird remains paused."));
           pendingStart = { state: next, prompt: initialPrompt, ready: false };
+          issuedStarts.add(initialPrompt);
           try {
             pi.sendUserMessage(initialPrompt);
           } catch {
+            issuedStarts.delete(initialPrompt);
             pendingStart = undefined;
             save(ctx, pause(next, "Initial prompt could not be queued."));
             ctx.ui.notify(
@@ -223,7 +221,8 @@ export default function dippingBird(pi: ExtensionAPI): void {
       },
       { additionalProperties: false },
     ),
-    async execute(_id, params, _signal, _update, ctx) {
+    async execute(_id, params, signal, _update, ctx) {
+      if (signal?.aborted) throw new Error("Checkpoint cancelled.");
       if (!state || state.mode !== "running")
         throw new Error(
           "Bird is not running. Only the user can start it with /bird start.",
@@ -231,6 +230,7 @@ export default function dippingBird(pi: ExtensionAPI): void {
       const pin = state;
       const ticket = revision;
       const matches = await sameIdentity(ctx, pin);
+      if (signal?.aborted) throw new Error("Checkpoint cancelled.");
       if (revision !== ticket)
         throw new Error("Bird changed while checking; checkpoint refused.");
       if (!matches) {
@@ -275,18 +275,15 @@ export default function dippingBird(pi: ExtensionAPI): void {
   });
   pi.on("input", (event, ctx) => {
     if (event.source === "extension") return;
-    if (pendingStart) {
-      pendingStart = undefined;
-      revision++;
-    }
+    pendingStart = undefined;
+    revision++;
     if (["stop", "pause"].includes(event.text.trim().toLowerCase())) {
-      revision++;
       if (state) save(ctx, pause(state, "User requested a stop/pause."));
     }
   });
   pi.on("before_agent_start", async (event, ctx) => {
     const birdStart =
-      event.messageType === "user" && START_MESSAGE.test(event.prompt);
+      event.messageType === "user" && issuedStarts.delete(event.prompt);
     const pending = pendingStart;
     if (pending) {
       pendingStart = undefined;
@@ -295,7 +292,8 @@ export default function dippingBird(pi: ExtensionAPI): void {
         event.messageType === "user" &&
         event.prompt === pending.prompt &&
         (await sameIdentity(ctx, pending.state)) &&
-        revision === ticket
+        revision === ticket &&
+        hasBudget(pending.state, Date.now())
       ) {
         pendingStart = { ...pending, ready: true };
       }
@@ -333,12 +331,20 @@ export default function dippingBird(pi: ExtensionAPI): void {
     if (!pendingStart?.ready) return;
     const next = pendingStart.state;
     pendingStart = undefined;
+    if (!hasBudget(next, Date.now())) {
+      save(
+        ctx,
+        pause(next, "Supervision window expired before the initial run."),
+      );
+      ctx.abort();
+      return;
+    }
     save(ctx, next);
   });
   pi.on("agent_settled", (event, ctx) => {
     pendingStart = undefined;
-    if (!event.aborted) return;
     revision++;
+    if (!event.aborted) return;
     if (state?.mode === "running")
       save(ctx, pause(state, "Run aborted; explicitly restart Bird."));
   });

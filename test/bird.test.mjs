@@ -68,6 +68,69 @@ test("queued start is invalidated by stop or human input", async () => {
   }
 });
 
+test("human input cancels a start during either identity lookup", async () => {
+  for (const phase of ["start", "context", "settled"]) {
+    const h = harness();
+    if (phase !== "start") await h.rawCommand("start Goal");
+    const finish = deferIdentity(h);
+    const pending =
+      phase === "start"
+        ? h.rawCommand("start Goal")
+        : context(h, h.messages[0]);
+    if (phase === "settled")
+      h.handlers.get("agent_settled")({ aborted: false }, h.ctx);
+    else await input(h, "wait");
+    finish();
+    await pending;
+    h.handlers.get("agent_start")({}, h.ctx);
+    if (h.latest()) assert.equal(h.latest().mode, "paused");
+    else assert.equal(h.messages.length, 0);
+  }
+});
+
+test("cancelled checkpoints cannot persist completion", async () => {
+  const h = harness();
+  await h.command("start");
+  const finish = deferIdentity(h);
+  const controller = new AbortController();
+  const pending = h.checkpoint(
+    { ...work, status: "complete", evidence: ["proof"] },
+    controller.signal,
+  );
+  controller.abort();
+  finish();
+  await assert.rejects(pending, /cancelled/);
+  assert.equal(h.latest().mode, "running");
+  await assert.rejects(h.checkpoint(work, controller.signal), /cancelled/);
+  h.handlers.get("agent_settled")({ aborted: true }, h.ctx);
+  assert.equal(h.latest().mode, "paused");
+});
+
+test("pasted startup markers are ordinary user text", async () => {
+  const h = harness();
+  await context(
+    h,
+    "Explain this:\n[BIRD START 00000000-0000-0000-0000-000000000000]\nquoted transcript",
+  );
+  assert.equal(h.state.aborts, 0);
+});
+
+test("queued starts cannot arm outside their original time window", async (t) => {
+  let now = 100;
+  t.mock.method(Date, "now", () => now);
+  for (const phase of ["context", "agent_start"]) {
+    now = 100;
+    const h = harness();
+    await h.rawCommand("start");
+    if (phase === "agent_start") await context(h, h.messages[0]);
+    now += core.MAX_ELAPSED_MS;
+    if (phase === "context") await context(h, h.messages[0]);
+    h.handlers.get("agent_start")({}, h.ctx);
+    assert.equal(h.latest().mode, "paused");
+    assert.equal(h.state.aborts, 1);
+  }
+});
+
 test("queue failure disarms", async () => {
   const h = harness();
   h.pi.sendUserMessage = () => {
@@ -213,6 +276,7 @@ test("state inputs are bounded and normalized", () => {
     { ...state, continuations: 61 },
     { ...state, evidence: [""] },
     { ...state, startedAt: Infinity },
+    { ...state, startedAt: -1 },
   ])
     assert.equal(core.restore(raw), undefined);
   for (const goal of ["", "x".repeat(4001)])
