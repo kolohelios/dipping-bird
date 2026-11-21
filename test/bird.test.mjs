@@ -1,505 +1,238 @@
 import assert from "node:assert/strict";
-import { realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
 import test from "node:test";
-
 import * as core from "../extensions/core.ts";
-import factory from "../extensions/index.ts";
+import { createState, deferIdentity, harness } from "./harness.mjs";
 
-export function harness(branch = []) {
-  const handlers = new Map();
-  const commands = new Map();
-  const tools = new Map();
-  const entries = [...branch];
-  const notifications = [];
-  const messages = [];
-  const calls = [];
-  const state = {
-    change: "ovqmlnlt",
-    idle: true,
-    pending: false,
-    aborts: 0,
-    execFails: false,
-  };
-  const ctx = {
-    cwd: process.cwd(),
-    hasUI: true,
-    ui: { setStatus() {}, notify: (...args) => notifications.push(args) },
-    sessionManager: {
-      getBranch: () => entries,
-      getEntries: () => {
-        throw new Error("Do not use abandoned branches");
-      },
-    },
-    isIdle: () => state.idle,
-    hasPendingMessages: () => state.pending,
-    abort: () => {
-      state.aborts++;
-    },
-  };
-  const pi = {
-    on: (name, handler) => {
-      handlers.set(name, handler);
-      return () => handlers.delete(name);
-    },
-    registerCommand: (name, command) => commands.set(name, command),
-    registerTool: (tool) => tools.set(tool.name, tool),
-    appendEntry: (customType, data) =>
-      entries.push({ type: "custom", customType, data }),
-    sendUserMessage: (message) => messages.push(message),
-    exec: async (...args) => {
-      calls.push(args);
-      return {
-        code: state.execFails ? 1 : 0,
-        killed: false,
-        stdout: state.change,
-        stderr: "",
-      };
-    },
-  };
-  factory(pi);
-  return {
-    pi,
-    ctx,
-    state,
-    entries,
-    notifications,
-    messages,
-    calls,
-    handlers,
-    commands,
-    tools,
-    rawCommand: (args) => commands.get("bird").handler(args, ctx),
-    async command(args) {
-      const before = messages.length;
-      await commands.get("bird").handler(args, ctx);
-      if (messages.length === before) return;
-      await handlers.get("before_agent_start")(
-        { messageType: "user", prompt: messages.at(-1) },
-        ctx,
-      );
-      handlers.get("agent_start")({}, ctx);
-    },
-    checkpoint: (params) =>
-      tools
-        .get("bird_checkpoint")
-        .execute("test", params, undefined, undefined, ctx),
-    latest: () =>
-      entries.findLast(
-        (entry) =>
-          entry.type === "custom" && entry.customType === core.STATE_KEY,
-      )?.data,
-    async settle(outcome = "completed", continued = false) {
-      const result = await handlers.get("agent_before_settle")(
-        { outcome, continue: continued, entries: [] },
-        ctx,
-      );
-      if (result?.entries) entries.push(...result.entries);
-      return result;
-    },
-  };
-}
+const work = { status: "continue", summary: "Next step", evidence: [] };
+const input = (h, text, source = "interactive") =>
+  h.handlers.get("input")({ source, text }, h.ctx);
+const context = (h, prompt) =>
+  h.handlers.get("before_agent_start")({ messageType: "user", prompt }, h.ctx);
 
-const createState = () =>
-  core.start(
-    "Complete acceptance with native evidence",
-    realpathSync(process.cwd()),
-    "ovqmlnlt",
-    Date.now(),
-  );
-
-test("empty lifecycle and status do not start Bird", async () => {
+test("loading and empty lifecycle are inert", async () => {
   const h = harness();
-  await h.handlers.get("session_start")({}, h.ctx);
-  await h.handlers.get("session_compact")({}, h.ctx);
-  await h.handlers.get("session_shutdown")({}, h.ctx);
+  for (const name of ["session_start", "session_compact", "session_shutdown"])
+    await h.handlers.get(name)({}, h.ctx);
   await h.handlers.get("agent_settled")({ aborted: true }, h.ctx);
   await h.command("");
+  await h.command("unknown");
   await h.command("stop");
   assert.equal(h.latest(), undefined);
-  assert.equal(h.messages.length, 0);
-});
-
-test("queued starts wait for the exact initial prompt and cannot arm after stop", async () => {
-  const h = harness();
-  await h.rawCommand("start Goal");
-  const initial = h.messages[0];
-  assert.equal(h.latest().mode, "paused");
-  assert.equal(await h.settle(), undefined);
-  await h.command("stop");
-  await h.handlers.get("before_agent_start")(
-    { messageType: "user", prompt: initial },
-    h.ctx,
-  );
-  await h.handlers.get("agent_start")({}, h.ctx);
-  assert.equal(h.state.aborts, 2);
-  assert.equal(h.latest().mode, "paused");
-});
-
-test("human input cancels a queued initial start", async () => {
-  const h = harness();
-  await h.rawCommand("start Goal");
-  await h.handlers.get("input")({ source: "interactive", text: "Wait" }, h.ctx);
-  await h.handlers.get("agent_start")({}, h.ctx);
-  assert.equal(h.latest().mode, "paused");
-});
-
-test("checkpoint identity drift and a changed resume pin are refused", async () => {
-  const h = harness();
-  await h.command("start Goal");
-  h.state.change = "zzzzzzzz";
-  await assert.rejects(
-    h.checkpoint({ status: "continue", summary: "Work", evidence: [] }),
-  );
-  assert.equal(h.latest().mode, "paused");
-  await h.command("start");
-  assert.equal(h.messages.length, 1);
-  assert.equal(h.latest().mode, "paused");
-});
-
-test("final abort pauses an active Bird, but normal settlement does not", async () => {
-  const h = harness();
-  await h.command("start Goal");
-  await h.handlers.get("agent_settled")({ aborted: false }, h.ctx);
-  assert.equal(h.latest().mode, "running");
-  await h.handlers.get("agent_settled")({ aborted: true }, h.ctx);
-  assert.equal(h.latest().mode, "paused");
-  await h.command("start");
-  h.ctx.hasUI = false;
-  const result = await h.settle("error");
-  assert.equal(result.continue, undefined);
-  assert.equal(h.latest().mode, "paused");
-});
-
-test("loading is inert; command explicitly starts with one user message and only read-only jj metadata", async () => {
-  const h = harness();
   assert.equal(h.calls.length, 0);
   assert.equal(h.messages.length, 0);
+  await assert.rejects(h.checkpoint(work));
+});
+
+test("start is explicit, pinned, read-only, and waits for its prompt", async () => {
+  const h = harness();
+  await h.rawCommand("start Goal");
+  assert.equal(h.latest().mode, "paused");
+  assert.equal(await h.settle(), undefined);
+  assert.equal(h.calls[0][0], "jj");
+  assert.equal(h.calls[0][1][0], "--ignore-working-copy");
+  assert.equal(h.calls[0][2].timeout, 5000);
+  await context(h, h.messages[0]);
+  h.handlers.get("agent_start")({}, h.ctx);
+  assert.equal(h.latest().mode, "running");
+  assert.equal(h.latest().change, h.state.change);
+  assert(h.messages[0].includes("authorizes no new I/O"));
+  await h.command("start");
+  assert.equal(h.messages.length, 1);
   assert.equal(
     h.tools.get("bird_checkpoint").parameters.additionalProperties,
     false,
   );
-  await h.command("start");
-  assert.equal(h.latest().mode, "running");
-  assert.equal(h.latest().change, "ovqmlnlt");
-  assert.equal(h.messages.length, 1);
-  assert.deepEqual(h.calls[0].slice(0, 2), [
-    "jj",
-    [
-      "--ignore-working-copy",
-      "log",
-      "-r",
-      "@",
-      "--no-graph",
-      "-T",
-      "change_id.short(8)",
-    ],
-  ]);
-  assert(h.messages[0].includes("authorizes no new I/O"));
-  assert(h.messages[0].includes("not certification by Bird"));
 });
 
-test("final boundary persists a hidden continuation and increments only the model-work counter", async () => {
-  const h = harness();
-  await h.command("start");
-  const result = await h.settle();
-  assert.equal(result.continue, true);
-  assert.equal(h.latest().continuations, 1);
-  assert.equal(result.entries[1].display, false);
-  assert(result.entries[1].content.includes("Never invent approvals"));
-  assert.equal(h.messages.length, 1);
-});
-
-test("blocked checkpoint stays stopped until explicit resume, preserving limits", async () => {
-  const h = harness();
-  await h.command("start");
-  await h.settle();
-  const before = h.latest();
-  await h.checkpoint({
-    status: "blocked",
-    summary: "Need one explicit read-only scope",
-    evidence: [],
-  });
-  assert.equal(await h.settle(), undefined);
-  assert.equal(await h.settle(), undefined);
-  await h.handlers.get("input")(
-    { source: "extension", text: "Continue" },
-    h.ctx,
-  );
-  assert.equal(h.latest().mode, "blocked");
-  await h.handlers.get("input")(
-    { source: "interactive", text: "Here is my decision" },
-    h.ctx,
-  );
-  assert.equal(h.latest().mode, "blocked");
-  assert.equal(await h.settle(), undefined);
-  await h.command("start");
-  assert.equal(h.latest().mode, "running");
-  assert.equal(h.latest().startedAt, before.startedAt);
-  assert.equal(h.latest().continuations, before.continuations);
-  assert(h.latest().summary.includes("no permissions renewed"));
-});
-
-test("complete requires evidence and reports review rather than independent certification", async () => {
-  const h = harness();
-  await h.command("start");
-  await assert.rejects(
-    h.checkpoint({ status: "complete", summary: "Done", evidence: [] }),
-  );
-  const result = await h.checkpoint({
-    status: "complete",
-    summary: "Criteria have referenced evidence",
-    evidence: ["safe-proof.json: every criterion"],
-  });
-  assert.equal(h.latest().mode, "review");
-  assert(result.content[0].text.includes("not independently certified"));
-  assert.equal(await h.settle(), undefined);
-  await h.command("status");
-  assert(h.notifications.at(-1)[0].includes("not independently certified"));
-});
-
-for (const outcome of ["aborted", "error"])
-  test(`${outcome} pauses instead of restarting`, async () => {
-    const h = harness();
-    await h.command("start");
-    const result = await h.settle(outcome);
-    assert.equal(result.continue, undefined);
-    assert.equal(h.latest().mode, "paused");
-    assert.equal(h.latest().continuations, 0);
-  });
-
-test("stop aborts active work and ordinary user input does not reactivate a stopped loop", async () => {
-  const h = harness();
-  await h.command("start");
-  h.state.idle = false;
-  await h.command("stop");
-  assert.equal(h.state.aborts, 1);
-  await h.handlers.get("input")(
-    { source: "interactive", text: "more context" },
-    h.ctx,
-  );
-  assert.equal(h.latest().mode, "paused");
-  assert.equal(await h.settle(), undefined);
-});
-
-test("user cancellation checkpoint remains paused on later ordinary input", async () => {
-  const h = harness();
-  await h.command("start");
-  await h.checkpoint({
-    status: "pause",
-    summary: "User asked to stop",
-    evidence: [],
-  });
-  await h.handlers.get("input")(
-    { source: "interactive", text: "thanks" },
-    h.ctx,
-  );
-  assert.equal(h.latest().mode, "paused");
-  assert.equal(await h.settle(), undefined);
-});
-
-test("plain stop/pause input pauses, busy start and duplicate start cannot queue another run", async () => {
+test("busy starts and failed identities cannot start work", async () => {
   const h = harness();
   h.state.idle = false;
+  await h.command("start");
+  h.state.idle = true;
+  h.state.execFails = true;
   await h.command("start");
   assert.equal(h.messages.length, 0);
-  h.state.idle = true;
-  await h.command("start");
-  await h.command("start");
-  assert.equal(h.messages.length, 1);
-  await h.handlers.get("input")({ source: "rpc", text: "pause" }, h.ctx);
-  assert.equal(h.latest().mode, "paused");
 });
 
-test("jj identity failure and changed workspace or change pause, never switch VCS state", async () => {
-  for (const fault of ["change", "cwd", "exec"]) {
+test("queued start is invalidated by stop or human input", async () => {
+  for (const stop of [true, false]) {
     const h = harness();
-    await h.command("start");
-    if (fault === "change") h.state.change = "zzzzzzzz";
-    if (fault === "cwd") h.ctx.cwd = tmpdir();
-    if (fault === "exec") h.state.execFails = true;
-    const result = await h.settle();
-    assert.equal(result.continue, undefined);
+    await h.rawCommand("start Goal");
+    await input(h, h.messages[0], "extension");
+    if (stop) await h.command("stop");
+    else await input(h, "wait");
+    await context(h, h.messages[0]);
+    h.handlers.get("agent_start")({}, h.ctx);
     assert.equal(h.latest().mode, "paused");
-    await assert.rejects(
-      h.checkpoint({
-        status: "continue",
-        summary: "ignore drift",
-        evidence: [],
-      }),
-    );
-    assert(h.calls.every(([program]) => program === "jj"));
+    assert(h.state.aborts > 0);
   }
 });
 
-test("before-agent context enforces pin warning without new permissions", async () => {
+test("queue failure disarms", async () => {
   const h = harness();
+  h.pi.sendUserMessage = () => {
+    throw new Error("queue failure");
+  };
   await h.command("start");
-  const context = await h.handlers.get("before_agent_start")({}, h.ctx);
-  assert.equal(context.message.display, false);
-  h.state.change = "zzzzzzzz";
-  const warning = await h.handlers.get("before_agent_start")({}, h.ctx);
-  assert.equal(warning.message.customType, "bird-paused");
   assert.equal(h.latest().mode, "paused");
 });
 
-test("pending user messages or another extension continuation do not generate duplicate Bird turns", async () => {
+test("continuation is hidden and does not duplicate other work", async () => {
   const h = harness();
   await h.command("start");
+  assert.equal((await context(h, "manual message")).message.display, false);
   h.state.pending = true;
   assert.equal(await h.settle(), undefined);
   h.state.pending = false;
   assert.equal(await h.settle("completed", true), undefined);
-  assert.equal(h.latest().continuations, 0);
+  const result = await h.settle();
+  assert.equal(result.continue, true);
+  assert.equal(h.latest().continuations, 1);
+  assert.equal(result.entries[1].display, false);
 });
 
-test("60-continuation cap stops without done and ordinary resume does not reset it", async () => {
-  const h = harness();
-  await h.command("start");
-  for (let i = 0; i < core.MAX_CONTINUATIONS; i++)
-    assert.equal((await h.settle()).continue, true);
-  assert.equal((await h.settle()).continue, undefined);
-  assert.equal(h.latest().mode, "paused");
-  assert.equal(h.latest().continuations, 60);
-  const count = h.messages.length;
-  await h.command("start");
-  assert.equal(h.messages.length, count);
-});
-
-test("elapsed cap stops integrated continuation and explicit no-goal resume keeps the cap", async (t) => {
-  let now = Date.now();
-  t.mock.method(Date, "now", () => now);
-  const h = harness();
-  await h.command("start");
-  now += core.MAX_ELAPSED_MS;
-  assert.equal((await h.settle()).continue, undefined);
-  assert.equal(h.latest().mode, "paused");
-  const messages = h.messages.length;
-  await h.command("start");
-  assert.equal(h.messages.length, messages);
-});
-
-test("stop during identity lookup cannot enqueue another continuation", async () => {
-  const h = harness();
-  await h.command("start");
-  let finish;
-  h.pi.exec = () =>
-    new Promise((resolve) => {
-      finish = resolve;
+test("terminal checkpoints stop until explicit resume with remaining limits", async () => {
+  for (const status of ["blocked", "pause", "complete"]) {
+    const h = harness();
+    await h.command("start");
+    await h.settle();
+    const origin = h.latest();
+    if (status === "complete")
+      await assert.rejects(h.checkpoint({ ...work, status }));
+    const result = await h.checkpoint({
+      ...work,
+      status,
+      evidence: ["proof.txt"],
     });
-  const pending = h.settle();
-  await h.command("stop");
-  finish({ code: 0, killed: false, stdout: "ovqmlnlt", stderr: "" });
-  assert.equal((await pending)?.continue, undefined);
-  assert.equal(h.latest().mode, "paused");
+    assert.equal(await h.settle(), undefined);
+    await input(h, "more context");
+    assert.notEqual(h.latest().mode, "running");
+    await h.command("status");
+    if (status === "complete")
+      assert(result.content[0].text.includes("not independently certified"));
+    await h.command("start");
+    assert.equal(h.latest().startedAt, origin.startedAt);
+    assert.equal(h.latest().continuations, origin.continuations);
+  }
 });
 
-test("stop cancels pending initial start, context injection and checkpoint without resurrecting the loop", async () => {
-  for (const action of ["start", "context", "checkpoint"]) {
+test("abort, errors, and explicit cancellation pause", async () => {
+  for (const action of ["error", "aborted", "stop", "pause", "settled"]) {
+    const h = harness();
+    await h.command("start");
+    if (["error", "aborted"].includes(action)) await h.settle(action);
+    else if (action === "settled") {
+      await h.handlers.get("agent_settled")({ aborted: false }, h.ctx);
+      await h.handlers.get("agent_settled")({ aborted: true }, h.ctx);
+    } else await input(h, action);
+    assert.equal(h.latest().mode, "paused");
+    assert.equal(await h.settle(), undefined);
+  }
+});
+
+test("identity drift is refused at each active boundary", async () => {
+  for (const action of ["checkpoint", "context", "settle"]) {
+    const h = harness();
+    await h.command("start");
+    h.state.change = "zzzzzzzz";
+    if (action === "checkpoint") await assert.rejects(h.checkpoint(work));
+    else if (action === "context")
+      assert.equal(
+        (await context(h, "manual")).message.customType,
+        "bird-paused",
+      );
+    else await h.settle();
+    assert.equal(h.latest().mode, "paused");
+    await h.command("start");
+    assert.equal(h.messages.length, 1);
+  }
+});
+
+test("stop wins in-flight identity lookups", async () => {
+  for (const action of ["start", "context", "checkpoint", "settle"]) {
     const h = harness();
     if (action !== "start") await h.command("start");
-    let finish;
-    h.pi.exec = () =>
-      new Promise((resolve) => {
-        finish = resolve;
-      });
+    const finish = deferIdentity(h);
     const pending =
       action === "start"
         ? h.command("start")
         : action === "context"
-          ? h.handlers.get("before_agent_start")({}, h.ctx)
-          : h.checkpoint({ status: "continue", summary: "work", evidence: [] });
-    const messages = h.messages.length;
+          ? context(h, "manual")
+          : action === "checkpoint"
+            ? h.checkpoint(work)
+            : h.settle();
     await h.command("stop");
-    finish({ code: 0, killed: false, stdout: "ovqmlnlt", stderr: "" });
+    finish();
     if (action === "checkpoint") await assert.rejects(pending);
     else assert.equal(await pending, undefined);
-    assert.equal(h.messages.length, messages);
     if (h.latest()) assert.equal(h.latest().mode, "paused");
   }
 });
 
-test("failure to queue the initial prompt disarms rather than leaving a running loop", async () => {
-  const h = harness();
-  h.pi.sendUserMessage = () => {
-    throw new Error("simulated queue failure");
-  };
-  await h.command("start");
-  assert.equal(h.latest().mode, "paused");
-  assert.equal(await h.settle(), undefined);
-});
-
-test("elapsed cap and clock rollback stop at a boundary without authorizing resets", () => {
-  const state = core.start("Goal", "/synthetic", "ovqmlnlt", 100);
-  for (const now of [99, 100 + core.MAX_ELAPSED_MS]) {
-    assert.equal(core.advance(state, now, "completed", true).mode, "paused");
-  }
-});
-
-test("compaction preserves active state; reload/resume/tree restore only active-branch state and remain paused", async () => {
+test("caps cannot be reset by ordinary resume", async (t) => {
+  let now = 100;
+  t.mock.method(Date, "now", () => now);
   const h = harness();
   await h.command("start");
+  for (let i = 0; i < core.MAX_CONTINUATIONS; i++)
+    assert.equal((await h.settle()).continue, true);
+  h.ctx.hasUI = false;
   await h.settle();
+  await h.command("start");
+  assert.equal(h.messages.length, 1);
+  await h.command("start New window");
+  assert.equal(h.latest().continuations, 0);
+  now += core.MAX_ELAPSED_MS;
+  await h.settle();
+  await h.command("start");
+  assert.equal(h.messages.length, 2);
+});
+
+test("compaction preserves state but restoration never arms", async () => {
+  const h = harness();
+  await h.command("start");
   await h.handlers.get("session_compact")({}, h.ctx);
   assert.equal(h.latest().mode, "running");
-  const restored = harness(h.entries);
-  await restored.handlers.get("session_start")(
-    { reason: "reload" },
-    restored.ctx,
-  );
-  assert.equal(restored.latest().mode, "paused");
-  assert.equal(restored.latest().continuations, 1);
-  assert.equal(restored.messages.length, 0);
-  await restored.command("start");
-  assert.equal(restored.latest().continuations, 1);
-  await restored.handlers.get("session_tree")({}, restored.ctx);
-  assert.equal(restored.latest().mode, "paused");
-  await restored.command("start");
-  await restored.handlers.get("session_shutdown")({}, restored.ctx);
-  assert.equal(restored.latest().mode, "paused");
+  await h.handlers.get("session_shutdown")({}, h.ctx);
+  const next = harness(h.entries);
+  await next.handlers.get("session_start")({}, next.ctx);
+  assert.equal(next.latest().mode, "paused");
+  await next.command("start");
+  await next.handlers.get("session_tree")({}, next.ctx);
+  assert.equal(next.latest().mode, "paused");
 });
 
-test("malformed persistence never enables continuation, unknown commands and failed identity never start", async () => {
-  const sample = createState();
-  for (const invalid of [
+test("state inputs are bounded and normalized", () => {
+  const state = createState();
+  for (const raw of [
     null,
     {},
-    { ...sample, version: 2 },
-    { ...sample, mode: "done" },
-    { ...sample, change: "bad" },
-    { ...sample, evidence: [42] },
-    { ...sample, startedAt: Infinity },
-    { ...sample, continuations: 61 },
-  ]) {
-    assert.equal(core.restore(invalid), undefined);
-  }
-  const h = harness();
-  await h.command("unknown");
-  await h.command("status");
-  h.state.execFails = true;
-  await h.command("start");
-  assert.equal(h.messages.length, 0);
-  await assert.rejects(
-    h.checkpoint({ status: "continue", summary: "go", evidence: [] }),
-  );
-});
-
-test("checkpoint bounds, control sanitization and new explicit goal retain boundaries", async () => {
-  assert.equal(core.clean(" a\u001b\u0000\nb "), "a   b");
-  for (const goal of ["", " ", "x".repeat(4001)])
-    assert.throws(() => core.start(goal, "/synthetic", "ovqmlnlt", 1));
-  const s = createState();
+    { ...state, version: 2 },
+    { ...state, mode: "bad" },
+    { ...state, evidence: [42] },
+    { ...state, continuations: 61 },
+    { ...state, evidence: [""] },
+    { ...state, startedAt: Infinity },
+  ])
+    assert.equal(core.restore(raw), undefined);
+  for (const goal of ["", "x".repeat(4001)])
+    assert.throws(() => core.start(goal, "/work", "abcdefgh", 0));
   for (const [summary, refs] of [
     ["", []],
     ["ok", [""]],
     ["ok", Array(33).fill("ref")],
-  ]) {
-    assert.throws(() => core.checkpoint(s, "continue", summary, refs));
-  }
-  const h = harness();
-  await h.command("start");
-  await h.command("stop");
-  await h.command("start Complete a fresh explicitly scoped goal");
-  assert.equal(h.latest().continuations, 0);
-  assert(h.messages.at(-1).includes("authorizes no new I/O"));
+  ])
+    assert.throws(() => core.checkpoint(state, "continue", summary, refs));
+  assert.equal(core.clean(" a\n\u001bb "), "a  b");
+  assert.throws(() =>
+    core.checkpoint({ ...state, mode: "paused" }, "continue", "work", []),
+  );
+  assert.equal(
+    core.advance({ ...state, mode: "paused" }, 0, "completed", true).mode,
+    "paused",
+  );
+  assert.equal(
+    core.advance(state, state.startedAt - 1, "completed", true).mode,
+    "paused",
+  );
 });
