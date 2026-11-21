@@ -1,36 +1,122 @@
 # Dipping Bird
 
-An opt-in Pi continuation extension for **jj workspaces**, not plain Git.
-This is a community package, not an official Pi-maintained extension.
-The first release is not published yet. Tested SDK: Pi 1.5.2; Node.js 22.19+.
+An opt-in Pi extension that keeps an authorized task moving until the agent
+reports completion, a blocker, or a pause. Works in **jj workspaces**; plain Git
+repositories are not supported.
 
-From this checkout, run `pi install ./`, then `/reload` inside Pi.
-Use `/bird start [goal]`, `/bird status`, and `/bird stop`.
-No-goal restart preserves the original limits; an explicit goal starts a new
-supervision window, not new permission. Limits: 60 automatic continuations or
-two elapsed hours, checked between runs rather than preempting an in-flight tool.
-Bird pins the real directory and jj change; identity failure pauses supervision.
-Escape pauses active runs; use `/bird stop` during a start waiting for jj.
-Stop/pause, reload, and tree navigation cannot automatically resume supervision.
-Checkpoint completion means evidence reported for review, not certification.
-Bird stores goals, workspace pins, and checkpoints in Pi session history; keep
-sensitive data out of them. Control normalization is not secret redaction.
+This is a community package, not an official Pi-maintained extension. The first
+release is being prepared in this public repository; the npm package is not published yet.
+
+## Use
+
+Tested with Pi 1.5.2. Requires Node.js 22.19+ and `jj` on Pi's PATH.
+From a local checkout:
+
+```sh
+pi install ./
+```
+
+In Pi:
+
+```text
+/reload
+/bird start Finish the current task against its existing acceptance criteria.
+/bird status
+/bird stop
+```
+
+`/bird start` uses the current conversation's task on first start; after that it
+resumes the saved goal with the **remaining original limits**. Supplying a new
+goal explicitly starts a new supervision window, not a new permission grant.
+
+## Limits and safety
+
+- At most **60 automatic continuations** or **two elapsed hours**, checked
+  between runs. An in-flight tool is not forcibly preempted by these caps.
+- Pins the real working directory and eight-character jj change ID. Identity
+  checks use read-only `jj --ignore-working-copy log`, with a five-second timeout.
+  Bird never switches directories or changes VCS state.
+- Escape/aborted runs pause active supervision. Use `/bird stop` to cancel a
+  start still waiting for jj; Pi's idle Escape handling does not cancel commands.
+  Plain `stop` or `pause` input also pauses Bird.
+- Reload, resume, fork, and tree navigation restore saved state **paused**.
+  Compaction preserves the current supervision window.
+- `bird_checkpoint` lets the model report `continue`, `blocked`, `pause`, or
+  `complete`. Completion requires evidence references and means **completion
+  reported for review**, not independent certification.
+- Bird controls its own continuations, not other extensions or manual prompts.
+  It does not enforce permissions on tools or verify evidence contents.
+
+Starting Bird can incur additional model costs. It grants no new file, network,
+credential, deployment, or publication authority. Existing approval gates remain
+in force. The continuation prompt also forbids Git use, creating changes/commits/
+workspaces/PRs, and spawning helper agents while Bird supervises the task.
+
+## Privacy
+
+Bird makes no direct network/model calls, reads no credentials, and starts no
+background services or timers. It stores its goal, workspace/change pin, limits,
+and checkpoint summaries/references as custom entries in Pi's session history.
+Do not put secrets or raw sensitive output in goals or checkpoints. Control
+characters are normalized; that is **not** secret redaction.
 
 ## Development
+
+Use the locked Nix dev shell (Linux or Apple Silicon macOS, not Intel macOS),
+or let direnv load `.envrc`:
 
 ```sh
 nix develop
 just install
+just typecheck
+just lint
+just format-check
+just test
+just build
 just validate
 just compat
 ```
 
-The pinned dev shell supports Linux and Apple Silicon macOS, not Intel macOS.
-These run typing, lint, formatting, per-file coverage, package assembly, and real
-Shaka repository gates. `shaka build` is a stub, so npm performs assembly.
-The Shaka policy and native main ruleset are desired configuration, not proof of
-live enforcement. Native rules require PRs, resolved threads, and strict matrix
-checks without bypasses. Shaka's branch-protection fixer clears PR requirements;
-do not use it to overwrite stronger live settings. Hosted CI must be observed.
+Tests use Node's test runner. Core/state and lifecycle tests use a fake Pi host;
+loader/package smoke tests use the real pinned Pi SDK without model requests.
+The coverage gate measures all extension source, including unimported files.
+`just build` packs the release into `dist/`, installs it offline without peer or
+dev dependencies, and verifies its manifest, contents, and Pi discovery. Only
+`extensions/index.ts` is registered; the helper module is not a second extension.
+
+`just validate` also runs Shaka's repository preflight/whitespace checks and
+Nix checks. Shaka is pinned from FlakeHub in `flake.lock`. Its current
+`shaka build` command is a stub and it has no TypeScript project kind, so the
+actual package assembly is an explicit npm recipe—not a claimed Shaka build.
+`repo-checks` initializes colocated jj metadata if needed for Shaka's tracked-file
+checks. No branch, remote, or source checkout is switched.
+
+GitHub Actions runs the same validation on Linux (Node 22 and 24) and macOS
+(Node 24), with Nix binary caching and lockfile-keyed npm download caching.
+It uploads coverage reports and verified tarballs; it never publishes to npm.
+
+## Main branch protection
+
+`.shaka/repo.cue` declares the desired merge policy and requires `Gate` plus all
+three explicitly named matrix checks, up-to-date with `main`. Force pushes and
+deletion of `main` are forbidden. Tests keep workflow names, Shaka policy, and
+`.github/main-ruleset.json` aligned.
+
+The native ruleset additionally requires a PR, resolved review conversations,
+and rebase-only merges, with no bypass actors. It requires no approving review
+because a single maintainer cannot approve their own PR. This still forbids
+direct pushes once the ruleset is active.
+
+**These files are desired policy, not live enforcement.** Before PR delivery,
+confirm the remote owner/host, enable protection, and verify the actual main
+rules and hosted CI checks. Live settings may drift independently of these files.
+Shaka cannot currently represent the PR requirement; its branch-protection
+`--fix` path clears required PR reviews. Do not use it as the complete setup
+operation or overwrite stronger existing settings.
+
+See [architecture](architecture.md) and [decisions](architecture-decision-record.md)
+for lifecycle and tooling details.
+
+## License
 
 Licensed under [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE), at your option.
