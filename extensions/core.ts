@@ -93,6 +93,15 @@ export function checkpoint(
   };
 }
 
+export function hasBudget(state: State, now: number): boolean {
+  return (
+    Number.isFinite(now) &&
+    now >= state.startedAt &&
+    now - state.startedAt < MAX_ELAPSED_MS &&
+    state.continuations < MAX_CONTINUATIONS
+  );
+}
+
 export function advance(
   state: State,
   now: number,
@@ -107,14 +116,13 @@ export function advance(
       state,
       "Working directory or jj change differs from the start pin.",
     );
-  if (now < state.startedAt || now - state.startedAt >= MAX_ELAPSED_MS) {
+  if (!hasBudget(state, now))
     return pause(
       state,
-      "Two-hour continuation limit reached (checked between runs).",
+      state.continuations >= MAX_CONTINUATIONS
+        ? "60 automatic continuations reached."
+        : "Two-hour continuation limit reached (checked between runs).",
     );
-  }
-  if (state.continuations >= MAX_CONTINUATIONS)
-    return pause(state, "60 automatic continuations reached.");
   return { ...state, continuations: state.continuations + 1 };
 }
 
@@ -143,6 +151,7 @@ export function restore(raw: unknown): State | undefined {
     !("startedAt" in raw) ||
     typeof raw.startedAt !== "number" ||
     !Number.isFinite(raw.startedAt) ||
+    raw.startedAt < 0 ||
     !("continuations" in raw) ||
     typeof raw.continuations !== "number" ||
     !Number.isInteger(raw.continuations) ||

@@ -76,10 +76,10 @@ export function harness(branch = []) {
       );
       handlers.get("agent_start")({}, ctx);
     },
-    checkpoint: (params) =>
+    checkpoint: (params, signal) =>
       tools
         .get("bird_checkpoint")
-        .execute("test", params, undefined, undefined, ctx),
+        .execute("test", params, signal, undefined, ctx),
     latest: () =>
       entries.findLast(
         (entry) =>
