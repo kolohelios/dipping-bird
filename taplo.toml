@@ -1,0 +1,4 @@
+include = ["**/*.toml"]
+# Dependency trees, build output, and direnv's linked upstream sources are not
+# repository-owned configuration.
+exclude = [".direnv/**", "node_modules/**", ".jj/**", "coverage/**", "dist/**"]

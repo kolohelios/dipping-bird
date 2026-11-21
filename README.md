@@ -1,75 +1,34 @@
 # Dipping Bird
 
-An opt-in Pi extension that keeps an authorized task moving until the agent
-reports completion, a blocker, or a pause. Works in **jj workspaces**; plain Git
-repositories are not supported.
+An opt-in Pi continuation extension for **jj workspaces**, not plain Git.
+This is a community package, not an official Pi-maintained extension.
+The first release is not published yet. Tested SDK: Pi 1.5.2; Node.js 22.19+.
 
-This is a community package, not an official Pi-maintained extension. The first
-release is being prepared; the repository and npm package are not published yet.
-
-## Use
-
-Requires Pi 1.5.2 (the tested SDK), Node.js 22.19+ and `jj` on Pi's PATH.
-From a local checkout:
-
-```sh
-pi install ./
-```
-
-In Pi:
-
-```text
-/reload
-/bird start Finish the current task against its existing acceptance criteria.
-/bird status
-/bird stop
-```
-
-`/bird start` uses the current conversation's task on first start; after that it
-resumes the saved goal with the **remaining original limits**. Supplying a new
-goal explicitly starts a new supervision window, not a new permission grant.
-
-## Limits and safety
-
-- At most **60 automatic continuations** or **two elapsed hours**, checked
-  between runs. An in-flight tool is not forcibly preempted by these caps.
-- Pins the real working directory and eight-character jj change ID. Identity
-  checks use read-only `jj --ignore-working-copy log`, with a five-second timeout.
-  Bird never switches directories or changes VCS state.
-- Escape/aborted runs, `/bird stop`, and plain `stop` or `pause` input pause Bird.
-- Reload, resume, fork, and tree navigation restore saved state **paused**.
-  Compaction preserves the current supervision window.
-- `bird_checkpoint` lets the model report `continue`, `blocked`, `pause`, or
-  `complete`. Completion requires evidence references and means **completion
-  reported for review**, not independent certification.
-- Bird controls its own continuations, not other extensions or manual prompts.
-  It does not enforce permissions on tools or verify evidence contents.
-
-Starting Bird can incur additional model costs. It grants no new file, network,
-credential, deployment, or publication authority. Existing approval gates remain
-in force. The continuation prompt also forbids Git use, creating changes/commits/
-workspaces/PRs, and spawning helper agents while Bird supervises the task.
-
-## Privacy
-
-Bird makes no direct network/model calls, reads no credentials, and starts no
-background services or timers. It stores its goal, workspace/change pin, limits,
-and checkpoint summaries/references as custom entries in Pi's session history.
-Do not put secrets or raw sensitive output in goals or checkpoints. Control
-characters are normalized; that is **not** secret redaction.
+From this checkout, run `pi install ./`, then `/reload` inside Pi.
+Use `/bird start [goal]`, `/bird status`, and `/bird stop`.
+No-goal restart preserves the original limits; an explicit goal starts a new
+supervision window, not new permission. Limits: 60 automatic continuations or
+two elapsed hours, checked between runs rather than preempting an in-flight tool.
+Bird pins the real directory and jj change; identity failure pauses supervision.
+Escape, stop/pause, reload, and tree navigation cannot automatically resume it.
+Checkpoint completion means evidence reported for review, not certification.
+Bird stores goals, workspace pins, and checkpoints in Pi session history; keep
+sensitive data out of them. Control normalization is not secret redaction.
 
 ## Development
 
 ```sh
-npm ci --ignore-scripts
-just typecheck
-just lint
-just format-check
-just test
+nix develop
+just install
+just validate
+just compat
 ```
 
-Tests use Node's test runner. Core/state and lifecycle tests use a fake Pi host;
-loader/package smoke tests use the real pinned Pi SDK without model requests.
-The coverage gate measures all extension source, including unimported files.
+These run typing, lint, formatting, per-file coverage, package assembly, and real
+Shaka repository gates. `shaka build` is a stub, so npm performs assembly.
+The Shaka policy and native main ruleset are desired configuration, not proof of
+live enforcement. Native rules require PRs, resolved threads, and strict matrix
+checks without bypasses. Shaka's branch-protection fixer clears PR requirements;
+do not use it to overwrite stronger live settings. Hosted CI must be observed.
 
-See [the release plan](specs/public-release.md) for acceptance criteria.
+Licensed under [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE), at your option.

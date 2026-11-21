@@ -1,0 +1,45 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    name: Validate (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, node: 24, shell: default }
+          - { os: ubuntu-24.04, node: 22, shell: node22 }
+          - { os: macos-15, node: 24, shell: default }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@4b040423529d49b1a19ba918742e0aa9aa95031a # v3
+      - name: Install, validate, and assemble
+        run: |
+          nix develop ".#${SHELL_NAME}" --command just install
+          nix develop ".#${SHELL_NAME}" --command just validate
+        env:
+          SHELL_NAME: ${{ matrix.shell }}
+  gate:
+    name: Gate
+    needs: validate
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - run: test "$RESULT" = success
+        env:
+          RESULT: ${{ needs.validate.result }}
