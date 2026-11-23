@@ -1,6 +1,22 @@
 export const MAX_CONTINUATIONS = 60;
 export const MAX_ELAPSED_MS = 2 * 60 * 60 * 1000;
 export const STATE_KEY = "dipping-bird-v1";
+export const START_KEY = "dipping-bird-start-v1";
+
+export type StartReceipt = Readonly<{ prompt: string; consumed: boolean }>;
+
+export function readStartReceipt(raw: unknown): StartReceipt | undefined {
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    !("prompt" in raw) ||
+    typeof raw.prompt !== "string" ||
+    !("consumed" in raw) ||
+    typeof raw.consumed !== "boolean"
+  )
+    return undefined;
+  return { prompt: raw.prompt, consumed: raw.consumed };
+}
 
 export type Mode = "running" | "paused" | "blocked" | "review";
 export type Verdict = "continue" | "blocked" | "complete" | "pause";

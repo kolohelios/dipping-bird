@@ -30,6 +30,9 @@ In Pi:
 resumes the saved goal with the **remaining original limits**. Supplying a new
 goal explicitly starts a new supervision window, not a new permission grant.
 
+When upgrading from `0.1.4` or earlier, quit Pi before updating and start a new
+process afterward. Old in-flight startups have no receipts to recover on reload.
+
 ## Limits and safety
 
 - At most **60 automatic continuations** or **two elapsed hours**, checked
@@ -41,7 +44,8 @@ goal explicitly starts a new supervision window, not a new permission grant.
   start still waiting for jj; Pi's idle Escape handling does not cancel commands.
   Plain `stop` or `pause` input also pauses Bird.
 - Reload, resume, fork, and tree navigation restore saved state **paused**.
-  Compaction preserves the current supervision window.
+  Issued-start receipts reject exact canceled prompts when delayed preflight
+  finishes after reload completes. Compaction preserves the current window.
 - `bird_checkpoint` lets the model report `continue`, `blocked`, `pause`, or
   `complete`. Completion requires evidence references and means **completion
   reported for review**, not independent certification.
@@ -53,11 +57,21 @@ credential, deployment, or publication authority. Existing approval gates remain
 in force. The continuation prompt also forbids Git use, creating changes/commits/
 workspaces/PRs, and spawning helper agents while Bird supervises the task.
 
+## Known SDK limitations
+
+This is a partial cancellation fix for Pi 1.5.2. Preflight completing during
+resource replacement, or input extensions transforming startup text, can still
+let canceled work reach the model. An old preflight can also abort a newer
+manual run because the SDK's abort is session-wide. Restart Pi to cancel a stuck
+preflight rather than relying on reload. Host-level cancellation fixes remain
+necessary before this change is ready for release.
+
 ## Privacy
 
 Bird makes no direct network/model calls, reads no credentials, and starts no
 background services or timers. It stores its goal, workspace/change pin, limits,
-and checkpoint summaries/references as custom entries in Pi's session history.
+checkpoint summaries/references, and issued/consumed startup prompts as custom
+entries in Pi's session history.
 Do not put secrets or raw sensitive output in goals or checkpoints. Control
 characters are normalized; that is **not** secret redaction.
 
@@ -79,7 +93,9 @@ just compat
 ```
 
 Tests use Node's test runner. Core/state and lifecycle tests use a fake Pi host;
-loader/package smoke tests use the real pinned Pi SDK without model requests.
+loader/package smoke tests use the real pinned Pi SDK. Reload regressions run
+real SDK sessions with isolated credentials and a stub provider, without model
+requests.
 The coverage gate measures all extension source, including unimported files.
 `just build` packs the release into `dist/`, installs it offline without peer or
 dev dependencies, and verifies its manifest, contents, and Pi discovery. Only

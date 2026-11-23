@@ -13,8 +13,10 @@ import {
   MAX_ELAPSED_MS,
   pause,
   prompt,
+  readStartReceipt,
   restore,
   start,
+  START_KEY,
   STATE_KEY,
   type State,
 } from "./core.ts";
@@ -25,7 +27,6 @@ const DEFAULT_GOAL =
 export default function dippingBird(pi: ExtensionAPI): void {
   let state: State | undefined;
   let revision = 0;
-  const issuedStarts = new Set<string>();
   let pendingStart:
     { state: State; prompt: string; ready: boolean } | undefined;
 
@@ -42,6 +43,19 @@ export default function dippingBird(pi: ExtensionAPI): void {
     state = next;
     pi.appendEntry(STATE_KEY, next);
     show(ctx);
+  };
+  const consumeStart = (ctx: ExtensionContext, text: string): boolean => {
+    const receipt = ctx.sessionManager
+      .getBranch()
+      .flatMap((entry) =>
+        entry.type === "custom" && entry.customType === START_KEY
+          ? [readStartReceipt(entry.data)]
+          : [],
+      )
+      .findLast((entry) => entry?.prompt === text);
+    if (receipt?.consumed !== false) return false;
+    pi.appendEntry(START_KEY, { prompt: text, consumed: true });
+    return true;
   };
   const identity = async (
     ctx: ExtensionContext,
@@ -155,35 +169,29 @@ export default function dippingBird(pi: ExtensionAPI): void {
             );
             return;
           }
-          save(ctx, {
-            ...state,
-            mode: "running",
-            summary:
-              "Resumed explicitly with remaining limits; no permissions renewed.",
-          });
-        } else {
-          save(
-            ctx,
-            start(goal || DEFAULT_GOAL, pin.cwd, pin.change, Date.now()),
-          );
         }
-        if (state) {
-          const next = state;
-          const initialPrompt = `[BIRD START ${randomUUID()}]\n${prompt(next)}`;
-          save(ctx, pause(next, "Awaiting initial run; Bird remains paused."));
-          pendingStart = { state: next, prompt: initialPrompt, ready: false };
-          issuedStarts.add(initialPrompt);
-          try {
-            pi.sendUserMessage(initialPrompt);
-          } catch {
-            issuedStarts.delete(initialPrompt);
-            pendingStart = undefined;
-            save(ctx, pause(next, "Initial prompt could not be queued."));
-            ctx.ui.notify(
-              "Bird paused: initial prompt could not be queued.",
-              "warning",
-            );
-          }
+        const next: State =
+          state && !goal
+            ? {
+                ...state,
+                mode: "running",
+                summary:
+                  "Resumed explicitly with remaining limits; no permissions renewed.",
+              }
+            : start(goal || DEFAULT_GOAL, pin.cwd, pin.change, Date.now());
+        const initialPrompt = `[BIRD START ${randomUUID()}]\n${prompt(next)}`;
+        save(ctx, pause(next, "Awaiting initial run; Bird remains paused."));
+        pi.appendEntry(START_KEY, { prompt: initialPrompt, consumed: false });
+        pendingStart = { state: next, prompt: initialPrompt, ready: false };
+        try {
+          pi.sendUserMessage(initialPrompt);
+        } catch {
+          pendingStart = undefined;
+          save(ctx, pause(next, "Initial prompt could not be queued."));
+          ctx.ui.notify(
+            "Bird paused: initial prompt could not be queued.",
+            "warning",
+          );
         }
       } catch {
         if (revision !== ticket) return;
@@ -283,7 +291,7 @@ export default function dippingBird(pi: ExtensionAPI): void {
   });
   pi.on("before_agent_start", async (event, ctx) => {
     const birdStart =
-      event.messageType === "user" && issuedStarts.delete(event.prompt);
+      event.messageType === "user" && consumeStart(ctx, event.prompt);
     const pending = pendingStart;
     if (pending) {
       pendingStart = undefined;
