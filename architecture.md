@@ -39,6 +39,10 @@ armed window. Checkpoints are session data, not independent proof.
 A start queues a nonce-bearing user prompt while Bird remains paused. Only the
 exact prompt with a verified pin and remaining budget can arm at `agent_start`.
 Stop, lifecycle replacement, and final settlement invalidate pending lookups.
+`dipping-bird-start-v1` entries record each exact issued prompt and its consumption.
+The active branch retains these receipts across extension reloads, unlike a
+factory-local set. A receipt can reject a delayed prompt but cannot arm Bird.
+Once consumed, it no longer claims a later manual copy of that prompt.
 `agent_before_settle` appends its proposal after earlier extensions' entries;
 it does not duplicate work when another continuation or message is pending.
 
