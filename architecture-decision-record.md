@@ -35,6 +35,20 @@ completion as a report for review, and restores paused state. It does not inspec
 evidence artifacts or implement a tool permission gate. Stronger enforcement
 would require a separate design and cannot be implied by installation.
 
+## Separate TypeScript's compiler from ESLint's parser runtime
+
+Use TypeScript 7 via the pinned `typescript-compiler` npm alias for typechecking.
+Keep `typescript` at 6.0.3 to satisfy typescript-eslint's supported peer range
+and provide the JavaScript compiler API its parser uses. A direct upgrade of
+`typescript` to 7 fails `npm ci` because typescript-eslint 8.x currently requires
+TypeScript below 6.1. Do not bypass this with forced or legacy peer resolution.
+
+`just typecheck` invokes the aliased compiler entry point explicitly, avoiding
+ambiguous `tsc` bin links when both versions are installed. Toolchain tests check
+both the real compiler version and ESLint's resolution/parsing. Both packages
+are development-only; neither is shipped in the extension tarball. Remove this
+split once typescript-eslint supports the TypeScript 7 package/API.
+
 ## Use Shaka's real gates without pretending it builds TypeScript
 
 The pinned Shaka binary provides repository preflight and whitespace checks.
