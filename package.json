@@ -45,7 +45,7 @@
     "@types/node": "26.6.6",
     "c8": "9.1.0",
     "eslint": "10.15.0",
-    "globals": "17.4.0",
+    "globals": "17.14.0",
     "prettier": "3.10.1",
     "typebox": "1.4.7",
     "typescript": "6.0.3",
