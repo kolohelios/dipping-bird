@@ -1,0 +1,59 @@
+name: Publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      id-token: write
+
+  publish:
+    needs: validate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@4b040423529d49b1a19ba918742e0aa9aa95031a # v3
+      - name: Select patch version and stamp release metadata
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: nix develop --command node scripts/release.mjs prepare
+      - name: Assemble and verify release tarball
+        if: steps.release.outputs.published != 'true'
+        run: |
+          nix develop --command just install
+          nix develop --command just build
+      - name: Publish verified tarball with npm trusted publishing
+        if: steps.release.outputs.published != 'true'
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          nix develop --command npm publish "./dist/kolohelios-dipping-bird-${RELEASE_VERSION}.tgz" \
+            --access public --provenance --tag latest --registry=https://registry.npmjs.org
+      - name: Create release tag and GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: nix develop --command node scripts/release.mjs finalize

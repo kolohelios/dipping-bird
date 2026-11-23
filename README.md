@@ -4,17 +4,18 @@ An opt-in Pi extension that keeps an authorized task moving until the agent
 reports completion, a blocker, or a pause. Works in **jj workspaces**; plain Git
 repositories are not supported.
 
-This is a community package, not an official Pi-maintained extension. The first
-release is being prepared in this public repository; the npm package is not published yet.
+This is a community package, not an official Pi-maintained extension.
 
 ## Use
 
 Tested with Pi 1.5.2. Requires Node.js 22.19+ and `jj` on Pi's PATH.
-From a local checkout:
+Install from npm:
 
 ```sh
-pi install ./
+pi install npm:@kolohelios/dipping-bird
 ```
+
+For local development, use `pi install ./` from a checkout.
 
 In Pi:
 
@@ -93,7 +94,14 @@ checks. No branch, remote, or source checkout is switched.
 
 GitHub Actions runs the same validation on Linux (Node 22 and 24) and macOS
 (Node 24), with Nix binary caching and lockfile-keyed npm download caching.
-It uploads coverage reports and verified tarballs; it never publishes to npm.
+CI uploads coverage reports and verified tarballs. Merges to `main` rerun every
+validation lane, stamp the next patch version into the release tarball, publish
+to npm, and create a Git tag/GitHub release. No version-bump commits or release
+PRs are needed. See
+[Publishing](https://github.com/kolohelios/dipping-bird/blob/main/docs/publishing.md)
+for npm trusted-publisher setup, versioning policy, and recovery. Use
+`just bump minor`, `just bump major`, or `just bump 0.3.0` to prepare a version
+change for a normal PR; patch releases require no local bump command.
 
 ## Main branch protection
 

@@ -5,8 +5,10 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,9 +16,11 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { promisify } from "node:util";
 
+import { stampRelease } from "../scripts/release.mjs";
+
 const execute = promisify(execFile);
 
-test("concurrent npm builds publish a complete artifact from a fresh directory", async () => {
+test("concurrent npm builds verify a stamped release artifact from a fresh directory", async () => {
   const scratch = mkdtempSync(join(tmpdir(), "bird-cold-build-"));
   try {
     mkdirSync(join(scratch, "test"));
@@ -28,6 +32,7 @@ test("concurrent npm builds publish a complete artifact from a fresh directory",
     );
     for (const path of [
       "package.json",
+      "package-lock.json",
       "extensions",
       "README.md",
       "CHANGELOG.md",
@@ -41,6 +46,17 @@ test("concurrent npm builds publish a complete artifact from a fresh directory",
       cpSync(new URL(`../${path}`, import.meta.url), join(scratch, path), {
         recursive: true,
       });
+    const stamped = stampRelease(
+      JSON.parse(readFileSync(join(scratch, "package.json"), "utf8")),
+      JSON.parse(readFileSync(join(scratch, "package-lock.json"), "utf8")),
+      "0.1.123",
+      "a".repeat(40),
+    );
+    writeFileSync(join(scratch, "package.json"), JSON.stringify(stamped.pkg));
+    writeFileSync(
+      join(scratch, "package-lock.json"),
+      JSON.stringify(stamped.lock),
+    );
     await Promise.all(
       [0, 1].map(() =>
         execute("npm", ["run", "build"], {
@@ -57,7 +73,7 @@ test("concurrent npm builds publish a complete artifact from a fresh directory",
       ),
     );
     assert.deepEqual(readdirSync(join(scratch, "dist")), [
-      "kolohelios-dipping-bird-0.1.0.tgz",
+      "kolohelios-dipping-bird-0.1.123.tgz",
     ]);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
