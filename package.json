@@ -49,11 +49,12 @@
     "prettier": "3.10.1",
     "typebox": "1.4.7",
     "typescript": "6.0.3",
+    "typescript-compiler": "npm:typescript@7.0.2",
     "typescript-eslint": "8.73.0",
     "yaml": "2.9.1"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node node_modules/typescript-compiler/bin/tsc --noEmit",
     "lint": "eslint extensions scripts test",
     "format:check": "prettier --check .",
     "format": "prettier --write .",

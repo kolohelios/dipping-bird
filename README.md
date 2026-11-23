@@ -92,6 +92,10 @@ just validate
 just compat
 ```
 
+`just typecheck` uses TypeScript 7 through the `typescript-compiler` alias.
+ESLint retains TypeScript 6 for its supported JavaScript parser API. Use the
+recipe rather than a bare `tsc`, whose npm bin link can be ambiguous.
+
 Tests use Node's test runner. Core/state and lifecycle tests use a fake Pi host;
 loader/package smoke tests use the real pinned Pi SDK. Reload regressions run
 real SDK sessions with isolated credentials and a stub provider, without model
