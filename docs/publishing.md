@@ -101,9 +101,11 @@ gh workflow run publish.yml --ref main
 The script recognizes already-published commits by their immutable npm metadata.
 Retries skip npm publication and finish creating the same tag/GitHub release,
 without another version bump or resetting `latest`. Existing tags are verified
-against the source SHA and never moved. Registry/API errors fail the release
-rather than guessing a version; rerun after an outage or registry propagation
-delay. Do not publish manually in parallel with CI, as external publishers do
+against the source SHA and never moved. After publishing, confirmation tolerates
+npm propagation 404s for up to two minutes before failing; a wrong source marker
+or another API error fails immediately. Errors include the failed endpoint and
+HTTP status without credentials. Rerun after a longer outage or propagation
+delay rather than guessing a version. Do not publish manually in parallel with CI, as external publishers do
 not share the workflow's serialization.
 
 If `main` has advanced, a manual dispatch releases the new commit, not the old

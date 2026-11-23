@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const name = "@kolohelios/dipping-bird";
 const stable = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
@@ -132,7 +133,7 @@ async function request(
   if (allow404 && response.status === 404) return null;
   assert(
     response.ok,
-    `Release API request failed with HTTP ${response.status}`,
+    `Release API request failed: ${method} ${url} returned HTTP ${response.status}`,
   );
   return response.json();
 }
@@ -177,22 +178,48 @@ export async function prepareRelease({
   return plan;
 }
 
+export async function confirmPublication({
+  version,
+  sha,
+  api = request,
+  wait = sleep,
+}) {
+  parts(version);
+  assert.match(sha, shaPattern);
+  const delays = [2000, 4000, 8000, 16000, 30000, 30000, 30000];
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    const published = await api(
+      `${registry}/${encodeURIComponent(name)}/${version}`,
+      {
+        allow404: true,
+      },
+    );
+    if (published !== null) {
+      assert.equal(published["x-release-commit"], sha);
+      return;
+    }
+    assert(
+      attempt < delays.length,
+      `npm ${version} is still unavailable after ${attempt + 1} checks; rerun this job once the registry has propagated`,
+    );
+    await wait(delays[attempt]);
+  }
+}
+
 export async function createRelease({
   version,
   sha,
   repository,
   token,
   api = request,
+  wait = sleep,
 }) {
   parts(version);
   assert.match(sha, shaPattern);
   assert.equal(repository, "kolohelios/dipping-bird");
   // Do not create a success-looking GitHub release until npm confirms the exact
   // version and source marker. This also supports retrying after npm succeeded.
-  const published = await api(
-    `${registry}/${encodeURIComponent(name)}/${version}`,
-  );
-  assert.equal(published["x-release-commit"], sha);
+  await confirmPublication({ version, sha, api, wait });
   const root = `https://api.github.com/repos/${repository}`;
   const tag = `v${version}`;
   const existingTag = await api(`${root}/git/ref/tags/${tag}`, {

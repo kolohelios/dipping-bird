@@ -6,6 +6,7 @@ import test from "node:test";
 import { parse } from "yaml";
 import {
   bumpVersion,
+  confirmPublication,
   createRelease,
   planBump,
   planRelease,
@@ -338,6 +339,92 @@ test("prepare refuses stale/divergent runs and registry failures without stampin
   });
 });
 
+test("npm confirmation retries propagation 404s without leaking GitHub credentials", async () => {
+  const waits = [];
+  let requests = 0;
+  await confirmPublication({
+    version: "0.1.1",
+    sha,
+    api: async (url, options) => {
+      assert.equal(
+        url,
+        "https://registry.npmjs.org/%40kolohelios%2Fdipping-bird/0.1.1",
+      );
+      assert.deepEqual(options, { allow404: true });
+      return ++requests < 4 ? null : { "x-release-commit": sha };
+    },
+    wait: async (ms) => {
+      waits.push(ms);
+    },
+  });
+  assert.equal(requests, 4);
+  assert.deepEqual(waits, [2000, 4000, 8000]);
+});
+
+test("npm confirmation stops after a bounded wait and rejects mismatches and API errors immediately", async () => {
+  const waits = [];
+  let requests = 0;
+  await assert.rejects(
+    confirmPublication({
+      version: "0.1.1",
+      sha,
+      api: async () => {
+        requests++;
+        return null;
+      },
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+    }),
+    /still unavailable after 8 checks/,
+  );
+  assert.equal(requests, 8);
+  assert.equal(
+    waits.reduce((sum, ms) => sum + ms, 0),
+    120000,
+  );
+  for (const api of [
+    async () => ({ "x-release-commit": olderSha }),
+    async () => {
+      throw new Error("HTTP 403");
+    },
+  ]) {
+    await assert.rejects(
+      confirmPublication({
+        version: "0.1.1",
+        sha,
+        api,
+        wait: async () =>
+          assert.fail("Must not retry a mismatch or an API failure"),
+      }),
+    );
+  }
+});
+
+test("finalize waits for npm visibility before creating any tag or release", async () => {
+  let visible = false;
+  const writes = [];
+  await createRelease({
+    version: "0.1.1",
+    sha,
+    repository,
+    wait: async () => {
+      visible = true;
+    },
+    api: async (url, options) => {
+      if (url.includes("registry.npmjs.org"))
+        return visible ? { "x-release-commit": sha } : null;
+      assert(visible);
+      if (options.method === "POST") {
+        writes.push(url);
+        return {};
+      }
+      return null;
+    },
+  });
+  assert.equal(writes.length, 2);
+});
+
 test("finalize confirms npm, creates a commit-pinned tag, and generates release notes", async () => {
   const calls = [];
   await createRelease({
@@ -353,7 +440,7 @@ test("finalize confirms npm, creates a commit-pinned tag, and generates release 
       return null;
     },
   });
-  assert.equal(calls[0].options, undefined);
+  assert.deepEqual(calls[0].options, { allow404: true });
   const writes = calls.filter(({ options }) => options?.method === "POST");
   assert.deepEqual(
     writes.map(({ options }) => options.body),
