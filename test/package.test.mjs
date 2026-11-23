@@ -88,6 +88,14 @@ test("the release tarball installs offline and loads through Pi's real package l
     const manifest = JSON.parse(
       readFileSync(join(installed, "package.json"), "utf8"),
     );
+    const sourceManifest = JSON.parse(
+      readFileSync(join(root, "package.json"), "utf8"),
+    );
+    assert.equal(manifest.version, sourceManifest.version);
+    assert.equal(
+      manifest["x-release-commit"],
+      sourceManifest["x-release-commit"],
+    );
     assert.equal(manifest.private, undefined);
     assert.equal(manifest.license, "MIT OR Apache-2.0");
     // Canonical texts, with Jon Edwards's copyright notice; no clause edits.

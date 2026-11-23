@@ -54,7 +54,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "eslint extensions test",
+    "lint": "eslint extensions scripts test",
     "format:check": "prettier --check .",
     "format": "prettier --write .",
     "test": "node --test test/*.test.mjs",

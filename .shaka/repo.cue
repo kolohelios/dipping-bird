@@ -27,5 +27,5 @@ package repopolicy
 		requireNonFastForward: true
 		requireStatusChecks: true
 	}
-	handAuthoredWorkflows: ["ci.yml"]
+	handAuthoredWorkflows: ["ci.yml", "publish.yml"]
 }

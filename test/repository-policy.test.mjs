@@ -90,6 +90,7 @@ test("main requires a PR, resolved conversations, and blocks force/deletion with
 });
 
 test("CI reports required checks for every PR/main push and never accepts skipped lanes", () => {
+  assert.deepEqual(policy.handAuthoredWorkflows, ["ci.yml", "publish.yml"]);
   assert(Object.hasOwn(workflow.on, "pull_request"));
   assert.deepEqual(workflow.on.push.branches, ["main"]);
   assert.equal(workflow.on.pull_request?.paths, undefined);

@@ -27,6 +27,11 @@ coverage:
 build:
     npm run build
 
+# Prepare a minor, major, or exact version for the next merge; never publish locally.
+[positional-arguments]
+bump target:
+    node scripts/release.mjs bump "$1"
+
 repo-checks:
     test -d .jj || jj git init --colocate
     shaka whitespace check
