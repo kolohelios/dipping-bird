@@ -7,19 +7,23 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import {
   advance,
+  BirdError,
   checkpoint,
+  formatSupervisionStatus,
   hasBudget,
   MAX_CONTINUATIONS,
-  MAX_ELAPSED_MS,
   pause,
   prompt,
   readStartReceipt,
   restore,
+  resume,
   start,
   START_KEY,
   STATE_KEY,
   type State,
 } from "./core.ts";
+import { registerNag } from "./nag.ts";
+import { registerBirdControl } from "./bird-control.ts";
 
 const DEFAULT_GOAL =
   "Finish the current conversation's task against its existing acceptance criteria and specs. Require evidence for every applicable criterion, native acceptance where required, and resolution of owner/vendor holds. Do not substitute offline test counts, more planning, or harness scaffolding for delivery.";
@@ -27,20 +31,29 @@ const DEFAULT_GOAL =
 export default function dippingBird(pi: ExtensionAPI): void {
   let state: State | undefined;
   let revision = 0;
+  let supervisedSinceInput = false;
+  let stoppedByUser = false;
+  let startingSupervision = false;
   let pendingStart:
     { state: State; prompt: string; ready: boolean } | undefined;
 
   const show = (ctx: ExtensionContext): void => {
-    ctx.ui.setStatus(
-      "dipping-bird",
-      state
-        ? `bird: ${state.mode === "review" ? "completion reported" : state.mode} ${state.continuations}/${MAX_CONTINUATIONS}`
-        : undefined,
-    );
+    try {
+      ctx.ui.setStatus(
+        "dipping-bird",
+        nag.status() ??
+          (state
+            ? `bird: ${state.mode === "review" ? "completion reported" : state.mode} ${state.continuations}/${MAX_CONTINUATIONS}`
+            : undefined),
+      );
+    } catch {
+      /* Status is cosmetic and may outlive its UI runner. */
+    }
   };
   const save = (ctx: ExtensionContext, next: State): void => {
     if (state !== next) revision++;
     state = next;
+    if (next.mode === "running") supervisedSinceInput = true;
     pi.appendEntry(STATE_KEY, next);
     show(ctx);
   };
@@ -96,6 +109,8 @@ export default function dippingBird(pi: ExtensionAPI): void {
   const recover = (ctx: ExtensionContext): void => {
     pendingStart = undefined;
     revision++;
+    supervisedSinceInput = false;
+    stoppedByUser = true;
     state = undefined;
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type === "custom" && entry.customType === STATE_KEY)
@@ -105,33 +120,104 @@ export default function dippingBird(pi: ExtensionAPI): void {
     else show(ctx);
   };
 
+  const nag = registerNag(pi, {
+    show,
+    canArm: (agent) =>
+      !startingSupervision &&
+      !pendingStart &&
+      state?.mode !== "running" &&
+      (!agent || (!supervisedSinceInput && !stoppedByUser)),
+    userStopped: () => {
+      stoppedByUser = true;
+    },
+    userDelivered: () => {
+      stoppedByUser = false;
+      supervisedSinceInput = state?.mode === "running";
+    },
+  });
+  registerBirdControl(pi, {
+    status: () => formatSupervisionStatus(state, Date.now()),
+    pause: (ctx) => {
+      stoppedByUser = true;
+      pendingStart = undefined;
+      revision++;
+      if (state?.mode === "running")
+        save(ctx, pause(state, "Paused by the agent."));
+    },
+    arm: async (action, goal, signal, ctx) => {
+      const busy =
+        nag.enabled() || pendingStart !== undefined || startingSupervision;
+      if (
+        stoppedByUser ||
+        (!busy && supervisedSinceInput && state?.mode !== "running")
+      )
+        throw new BirdError(
+          "Bird stopped in this run. Wait for fresh user input before arming it.",
+        );
+      if (busy)
+        throw new BirdError(
+          "Stop the active continuation or wait for Bird to start.",
+        );
+      const previous = state;
+      if (previous) supervisedSinceInput = true;
+      if (action === "start" && previous)
+        throw new BirdError(
+          "A Bird window already exists. Resume it or ask the user to start a new window.",
+        );
+      if (action === "resume" && !previous)
+        throw new BirdError("No saved Bird window to resume.");
+      if (previous?.mode === "running")
+        throw new BirdError("Bird is already running.");
+      startingSupervision = true;
+      supervisedSinceInput = true;
+      const ticket = ++revision;
+      try {
+        const pin = await identity(ctx);
+        if (revision !== ticket || signal?.aborted || stoppedByUser)
+          throw new BirdError("Bird start or resume was interrupted.");
+        const next = previous
+          ? resume(previous, pin.cwd, pin.change, Date.now())
+          : start(goal ?? DEFAULT_GOAL, pin.cwd, pin.change, Date.now());
+        try {
+          save(ctx, next);
+        } catch {
+          state = previous;
+          revision++;
+          show(ctx);
+          throw new BirdError(
+            "Session persistence failed; Bird was not armed.",
+          );
+        }
+        return next;
+      } finally {
+        startingSupervision = false;
+      }
+    },
+  });
+
   pi.registerCommand("bird", {
     description:
-      "Acceptance-driven continuation: /bird start [goal], /bird stop, /bird status",
+      "Supervise with /bird start [goal], or arm a reminder with /bird nag <prompt>",
     handler: async (args, ctx) => {
       const [action, ...words] = args.trim().split(/\s+/);
+      if (action === "nag") {
+        nag.command(args.trim().slice(3), ctx);
+        return;
+      }
       if (action === "status" || !action) {
-        const remaining = state
-          ? Math.max(
-              0,
-              Math.ceil(
-                (MAX_ELAPSED_MS - (Date.now() - state.startedAt)) / 60000,
-              ),
-            )
-          : 0;
-        ctx.ui.notify(
-          state
-            ? `Bird: ${state.mode === "review" ? "completion reported — inspect evidence; not independently certified" : state.mode}\nJJ change: ${state.change}; continuations ${state.continuations}/${MAX_CONTINUATIONS}; ${remaining} minutes left, checked between runs.\nGoal: ${state.goal}\nCheckpoint: ${state.summary}\nEvidence: ${state.evidence.join("; ") || "none"}`
-            : "Bird is not started. Use /bird start to supervise this task.",
-          "info",
-        );
+        ctx.ui.notify(formatSupervisionStatus(state, Date.now()), "info");
         return;
       }
       if (action === "stop") {
+        supervisedSinceInput = true;
+        nag.stop(ctx);
         pendingStart = undefined;
         revision++;
-        if (state) save(ctx, pause(state, "Stopped explicitly by the user."));
-        ctx.abort();
+        try {
+          if (state) save(ctx, pause(state, "Stopped explicitly by the user."));
+        } finally {
+          ctx.abort();
+        }
         ctx.ui.notify(
           "Bird stopped. Any delayed start will be aborted.",
           "info",
@@ -139,7 +225,10 @@ export default function dippingBird(pi: ExtensionAPI): void {
         return;
       }
       if (action !== "start") {
-        ctx.ui.notify("Usage: /bird start [goal] | stop | status", "warning");
+        ctx.ui.notify(
+          "Usage: /bird start [goal] | nag <prompt> | stop | status",
+          "warning",
+        );
         return;
       }
       if (!ctx.isIdle()) {
@@ -149,7 +238,16 @@ export default function dippingBird(pi: ExtensionAPI): void {
         );
         return;
       }
+      if (nag.enabled() || startingSupervision) {
+        ctx.ui.notify(
+          "Turn Nag off or wait for the current Bird start.",
+          "warning",
+        );
+        return;
+      }
       pendingStart = undefined;
+      startingSupervision = true;
+      stoppedByUser = false;
       const ticket = ++revision;
       try {
         const pin = await identity(ctx);
@@ -204,6 +302,8 @@ export default function dippingBird(pi: ExtensionAPI): void {
           "Bird did not start: identity, goal or resume pin could not be verified.",
           "warning",
         );
+      } finally {
+        startingSupervision = false;
       }
     },
   });
@@ -286,6 +386,8 @@ export default function dippingBird(pi: ExtensionAPI): void {
     pendingStart = undefined;
     revision++;
     if (["stop", "pause"].includes(event.text.trim().toLowerCase())) {
+      supervisedSinceInput = true;
+      nag.stop(ctx);
       if (state) save(ctx, pause(state, "User requested a stop/pause."));
     }
   });
@@ -294,7 +396,6 @@ export default function dippingBird(pi: ExtensionAPI): void {
       event.messageType === "user" && consumeStart(ctx, event.prompt);
     const pending = pendingStart;
     if (pending) {
-      pendingStart = undefined;
       const ticket = revision;
       if (
         event.messageType === "user" &&
@@ -304,7 +405,7 @@ export default function dippingBird(pi: ExtensionAPI): void {
         hasBudget(pending.state, Date.now())
       ) {
         pendingStart = { ...pending, ready: true };
-      }
+      } else if (pendingStart === pending) pendingStart = undefined;
     }
     // Preflight can outlive stop; abort again once Pi owns the run.
     if (birdStart && !pendingStart?.ready) {

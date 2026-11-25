@@ -1,7 +1,7 @@
 {
   "name": "@kolohelios/dipping-bird",
   "version": "0.1.0",
-  "description": "Opt-in, bounded, evidence-driven continuation for the Pi coding agent (jj workspaces).",
+  "description": "Opt-in reminders and bounded, evidence-driven jj supervision for the Pi coding agent.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
   "author": "Jon Edwards <jkedwards@me.com>",

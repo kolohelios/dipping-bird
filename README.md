@@ -1,14 +1,15 @@
 # Dipping Bird
 
-An opt-in Pi extension that keeps an authorized task moving until the agent
-reports completion, a blocker, or a pause. Works in **jj workspaces**; plain Git
-repositories are not supported.
+An opt-in Pi extension with two continuation modes: unbounded Nag reminders
+for any workspace, or bounded, evidence-driven supervision in **jj workspaces**.
+Neither mode grants the agent permission to do new work.
 
 This is a community package, not an official Pi-maintained extension.
 
 ## Use
 
-Tested with Pi 1.5.2. Requires Node.js 22.19+ and `jj` on Pi's PATH.
+Tested with Pi 1.5.2. Requires Node.js 22.19+; supervised Bird also requires `jj`
+on Pi's PATH.
 Install from npm:
 
 ```sh
@@ -33,7 +34,55 @@ goal explicitly starts a new supervision window, not a new permission grant.
 When upgrading from `0.1.4` or earlier, quit Pi before updating and start a new
 process afterward. Old in-flight startups have no receipts to recover on reload.
 
+## Nag reminders
+
+```text
+/nag Keep implementing until the agreed acceptance criteria are satisfied.
+/nag set Focus on the failing integration tests next.
+/nag status
+/nag off
+```
+
+`/bird nag <prompt>` is an alias. Enabling Nag **does not start a turn**; after
+a successful final boundary, Nag projects its prompt if no higher-priority work
+is waiting. `/nag on` reuses the saved prompt. `set` alone never enables Nag.
+
+Nag has **no jj pin, time/turn cap, checkpoint, or evidence requirement** and can
+incur ongoing model costs. The `nag` tool lets the agent stop before completion
+or asking for input, redirect the prompt, and re-arm when fresh input unblocks
+the task. `/nag off` doesn't abort current work or clear queues. Escape during a run disables
+Nag; provider errors don't trigger reminders. Reloads, forks, and tree navigation
+restore saved prompts/counts with Nag **off**; use `/nag on` explicitly to re-arm.
+If Nag state persistence fails, Nag stops locally: retry `/nag off` successfully
+before reloading.
+
+The `bird` tool can start first-time supervision during an authorized turn,
+pause it, inspect it, or resume its original pin and remaining budget. It cannot
+renew a window. Only one mode may continue work; neither tool may bypass an
+explicit stop without fresh user input. Use `/bird stop` to stop either mode
+and abort current work.
+
+### Optional queued-work integration
+
+Native Pi user queues take priority automatically. Extensions using custom
+steering or follow-up messages must synchronously claim this event while their
+work is pending; Pi's public pending-message count doesn't include those queues:
+
+```typescript
+pi.events.on("bird:yield-to-input", (claim) => {
+  if (hasDeliverableWork()) claim();
+});
+```
+
+The extension claiming priority is responsible for delivering its work. Nag
+rechecks before projection; suppressed prompts don't enter future model context
+or compaction and don't increment the count. Status and sidecars count context
+projections, not confirmed provider delivery; later request or auth failures may
+still count. No external inbox CLI or integration is required.
+
 ## Limits and safety
+
+These limits apply to supervised Bird, not Nag.
 
 - At most **60 automatic continuations** or **two elapsed hours**, checked
   between runs. An in-flight tool is not forcibly preempted by these caps.
@@ -66,6 +115,15 @@ manual run because the SDK's abort is session-wide. Restart Pi to cancel a stuck
 preflight rather than relying on reload. Host-level cancellation fixes remain
 necessary before this change is ready for release.
 
+If priority work arrives after a Nag request has begun, cancellation can still
+incur one no-action model turn before queued work proceeds. Priority checks
+aren't preemption of an already projected response or its tools; use Escape to
+interrupt work. As with manual Pi turns, steering received mid-response may not
+be applied before its tool batch.
+
+Nag deliberately follows Pi's successful boundaries, including token-limited
+responses. Use supervised Bird rather than Nag when continuation limits matter.
+
 ## Privacy
 
 Bird makes no direct network/model calls, reads no credentials, and starts no
@@ -73,7 +131,11 @@ background services or timers. It stores its goal, workspace/change pin, limits,
 checkpoint summaries/references, and issued/consumed startup prompts as custom
 entries in Pi's session history.
 Do not put secrets or raw sensitive output in goals or checkpoints. Control
-characters are normalized; that is **not** secret redaction.
+characters are normalized in supervised goals; that is **not** secret redaction.
+Nag stores its prompt, enabled setting, and projection count in the session. A
+projected reminder may append a `.nags` sidecar beside the session file containing
+only its timestamp, session path, and entry ID—not the prompt. Don't put secrets
+in reminder prompts either.
 
 ## Development
 
@@ -103,7 +165,7 @@ requests.
 The coverage gate measures all extension source, including unimported files.
 `just build` packs the release into `dist/`, installs it offline without peer or
 dev dependencies, and verifies its manifest, contents, and Pi discovery. Only
-`extensions/index.ts` is registered; the helper module is not a second extension.
+`extensions/index.ts` is registered; helper modules aren't separate extensions.
 
 `just validate` also runs Shaka's repository preflight/whitespace checks and
 Nix checks. Shaka is pinned from FlakeHub in `flake.lock`. Its current
@@ -144,6 +206,11 @@ operation or overwrite stronger existing settings.
 
 See [architecture](architecture.md) and [decisions](architecture-decision-record.md)
 for lifecycle and tooling details.
+
+## Acknowledgments
+
+Thanks to [Scott Parish (@srp)](https://github.com/srp) for the Nag workflow
+and agent-control contributions.
 
 ## License
 

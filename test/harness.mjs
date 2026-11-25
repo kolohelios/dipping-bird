@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import * as core from "../extensions/core.ts";
 import factory from "../extensions/index.ts";
+import { createEventBus } from "@earendil-works/pi-coding-agent";
 
 export function harness(branch = []) {
   const handlers = new Map();
@@ -9,6 +10,7 @@ export function harness(branch = []) {
   const entries = [...branch];
   const notifications = [];
   const messages = [];
+  const customMessages = [];
   const calls = [];
   const state = {
     change: "ovqmlnlt",
@@ -23,6 +25,7 @@ export function harness(branch = []) {
     ui: { setStatus() {}, notify: (...args) => notifications.push(args) },
     sessionManager: {
       getBranch: () => entries,
+      getSessionFile: () => undefined,
       getEntries: () => {
         throw new Error("Do not use abandoned branches");
       },
@@ -35,9 +38,30 @@ export function harness(branch = []) {
   };
   const pi = {
     on: (name, handler) => {
-      handlers.set(name, handler);
+      const previous = handlers.get(name);
+      const merge = (before, after) =>
+        before && after ? { ...before, ...after } : (after ?? before);
+      const next = (result, event, ctx) => {
+        const after = handler({ ...event, ...result }, ctx);
+        return after instanceof Promise
+          ? after.then((value) => merge(result, value))
+          : merge(result, after);
+      };
+      handlers.set(
+        name,
+        previous
+          ? (event, ctx) => {
+              const result = previous(event, ctx);
+              return result instanceof Promise
+                ? result.then((value) => next(value, event, ctx))
+                : next(result, event, ctx);
+            }
+          : handler,
+      );
       return () => handlers.delete(name);
     },
+    events: createEventBus(),
+    sendMessage: (message) => customMessages.push(message),
     registerCommand: (name, command) => commands.set(name, command),
     registerTool: (tool) => tools.set(tool.name, tool),
     appendEntry: (customType, data) =>
@@ -61,6 +85,7 @@ export function harness(branch = []) {
     entries,
     notifications,
     messages,
+    customMessages,
     calls,
     handlers,
     commands,
@@ -76,6 +101,16 @@ export function harness(branch = []) {
       );
       handlers.get("agent_start")({}, ctx);
     },
+    tool: (name, params, signal) =>
+      tools.get(name).execute("test", params, signal, undefined, ctx),
+    nag: (args) => commands.get("nag").handler(args, ctx),
+    async human(text) {
+      await handlers.get("input")({ source: "interactive", text }, ctx);
+      await handlers.get("message_end")(
+        { message: { role: "user", content: text } },
+        ctx,
+      );
+    },
     checkpoint: (params, signal) =>
       tools
         .get("bird_checkpoint")
@@ -87,10 +122,20 @@ export function harness(branch = []) {
       )?.data,
     async settle(outcome = "completed", continued = false, entriesBefore = []) {
       const result = await handlers.get("agent_before_settle")(
-        { outcome, continue: continued, entries: entriesBefore },
+        {
+          outcome,
+          continue: continued,
+          entries: entriesBefore,
+          context: { pendingMessages: [] },
+        },
         ctx,
       );
-      if (result?.entries) entries.push(...result.entries);
+      if (result?.entries) {
+        entries.push(...result.entries);
+        customMessages.push(
+          ...result.entries.filter((entry) => entry.type === "custom_message"),
+        );
+      }
       return result;
     },
   };
