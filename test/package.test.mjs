@@ -61,8 +61,12 @@ test("the release tarball installs offline and loads through Pi's real package l
       "README.md",
       "architecture-decision-record.md",
       "architecture.md",
+      "extensions/bird-control.ts",
       "extensions/core.ts",
       "extensions/index.ts",
+      "extensions/nag-marker.ts",
+      "extensions/nag-state.ts",
+      "extensions/nag.ts",
       "package.json",
     ]);
     runNpm(
@@ -153,6 +157,9 @@ test("the release tarball installs offline and loads through Pi's real package l
     assert.equal(loaded.extensions.length, 1);
     const [extension] = loaded.extensions;
     assert(extension.commands.has("bird"));
+    assert(extension.commands.has("nag"));
+    assert(extension.tools.has("bird"));
+    assert(extension.tools.has("nag"));
     assert.equal(
       extension.tools.get("bird_checkpoint").definition.exposure,
       "model-only",

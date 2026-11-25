@@ -1,3 +1,7 @@
+export class BirdError extends Error {
+  override readonly name = "BirdError";
+}
+
 export const MAX_CONTINUATIONS = 60;
 export const MAX_ELAPSED_MS = 2 * 60 * 60 * 1000;
 export const STATE_KEY = "dipping-bird-v1";
@@ -201,6 +205,38 @@ export function restore(raw: unknown): State | undefined {
       "Restored paused; /bird start explicitly resumes with the remaining limits.",
     evidence: evidence.map(clean),
   };
+}
+
+export function resume(
+  state: State,
+  cwd: string,
+  change: string,
+  now: number,
+): State {
+  if (state.cwd !== cwd || state.change !== change)
+    throw new BirdError("Bird pin differs; resuming is refused.");
+  if (!hasBudget(state, now))
+    throw new BirdError(
+      "Bird's supervision cap was reached. Only the user can start a new window.",
+    );
+  return {
+    ...state,
+    mode: "running",
+    summary: "Resumed with remaining limits; no permissions renewed.",
+  };
+}
+
+export function formatSupervisionStatus(
+  state: State | undefined,
+  now: number,
+): string {
+  if (!state)
+    return "Bird is not started. Use /bird start to supervise this task.";
+  const remaining = Math.max(
+    0,
+    Math.ceil((MAX_ELAPSED_MS - (now - state.startedAt)) / 60000),
+  );
+  return `Bird: ${state.mode === "review" ? "completion reported — inspect evidence; not independently certified" : state.mode}\nJJ change: ${state.change}; continuations ${state.continuations}/${MAX_CONTINUATIONS}; ${remaining} minutes left, checked between runs.\nGoal: ${state.goal}\nCheckpoint: ${state.summary}\nEvidence: ${state.evidence.join("; ") || "none"}`;
 }
 
 export function prompt(state: State): string {
